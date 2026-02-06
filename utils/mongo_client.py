@@ -1,8 +1,3 @@
-"""
-MongoDB client utilities for the Bird Pipeline project.
-Provides singleton connection management and helper functions.
-"""
-
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -85,20 +80,6 @@ def get_collection(name: str) -> Collection:
 
 
 def insert_observation(observation: Dict[str, Any]) -> str:
-    """
-    Insert a single observation into the observations collection.
-    
-    Args:
-        observation: Dictionary containing observation data with:
-            - taxon_key: Taxonomic identifier
-            - location: Dict with latitude and longitude
-            - biological_data: Flexible dict with varying properties
-            - observed_at: Optional timestamp
-            - source: Origin of the observation (e.g., 'kafka', 'audio_classification')
-    
-    Returns:
-        The inserted document's _id as string
-    """
     collection = get_collection("observations")
     
     # Transform to GeoJSON format for geospatial queries
@@ -122,15 +103,6 @@ def insert_observation(observation: Dict[str, Any]) -> str:
 
 
 def insert_observations_batch(observations: List[Dict[str, Any]]) -> List[str]:
-    """
-    Insert multiple observations in a batch for efficiency.
-    
-    Args:
-        observations: List of observation dictionaries
-    
-    Returns:
-        List of inserted document _ids as strings
-    """
     if not observations:
         return []
     
@@ -169,28 +141,8 @@ def get_observations_count() -> int:
     collection = get_collection("observations")
     return collection.count_documents({})
 
-
-# =============================================================================
 # Species Collection Functions
-# =============================================================================
-
 def upsert_species(species_data: Dict[str, Any]) -> bool:
-    """
-    Insert or update a single species in the species collection.
-    Uses taxon_key as the unique identifier.
-    
-    Args:
-        species_data: Dictionary containing species data with:
-            - taxon_key: Unique taxonomic identifier
-            - scientific_name: Scientific name of the species
-            - canonical_name: Common/canonical name
-            - rank: Taxonomic rank (e.g., "SPECIES")
-            - family: Family name
-            - order: Order name
-    
-    Returns:
-        True if document was inserted, False if updated
-    """
     collection = get_collection("species")
     
     # Add timestamp
@@ -208,15 +160,6 @@ def upsert_species(species_data: Dict[str, Any]) -> bool:
 
 
 def upsert_species_batch(species_list: List[Dict[str, Any]]) -> Dict[str, int]:
-    """
-    Insert or update multiple species in a batch using bulk operations.
-    
-    Args:
-        species_list: List of species dictionaries
-    
-    Returns:
-        Dictionary with counts: {"inserted": n, "updated": m}
-    """
     if not species_list:
         return {"inserted": 0, "updated": 0}
     
@@ -254,31 +197,23 @@ def get_species_count() -> int:
 
 
 def species_exists(taxon_key: str) -> bool:
-    """
-    Check if a species with the given taxon_key already exists.
-    
-    Args:
-        taxon_key: The taxonomic identifier to check
-    
-    Returns:
-        True if species exists, False otherwise
-    """
     collection = get_collection("species")
     return collection.count_documents({"taxon_key": taxon_key}, limit=1) > 0
 
 
 def get_species_by_taxon_key(taxon_key: str) -> Optional[Dict[str, Any]]:
-    """
-    Get a species by its taxon_key.
-    
-    Args:
-        taxon_key: The taxonomic identifier
-    
-    Returns:
-        Species document or None if not found
-    """
     collection = get_collection("species")
     return collection.find_one({"taxon_key": taxon_key})
+
+
+def get_species_by_scientific_name(scientific_name: str) -> Optional[Dict[str, Any]]:
+    collection = get_collection("species")
+    # Try exact match on scientific_name first
+    result = collection.find_one({"scientific_name": scientific_name})
+    if result:
+        return result
+    # Fall back to canonical_name (handles taxonomy synonyms)
+    return collection.find_one({"canonical_name": scientific_name})
 
 
 def get_all_species() -> List[Dict[str, Any]]:
@@ -286,29 +221,8 @@ def get_all_species() -> List[Dict[str, Any]]:
     collection = get_collection("species")
     return list(collection.find({}))
 
-
-# =============================================================================
 # Audio Classifications Collection Functions
-# =============================================================================
-
 def insert_audio_classification(classification_data: Dict[str, Any]) -> str:
-    """
-    Insert an audio classification result into the database.
-    
-    Args:
-        classification_data: Dictionary containing:
-            - file_name: Original file name
-            - minio_object_key: Object key in MinIO
-            - minio_bucket: Bucket name
-            - location: Dict with latitude and longitude
-            - classifications: List of classification results
-            - api_response: Raw API response
-            - log_object_key: Log file key in MinIO
-            - duration_seconds: Audio duration (optional)
-    
-    Returns:
-        The inserted document's _id as string
-    """
     collection = get_collection("audio_classifications")
     
     # Transform location to GeoJSON format
@@ -337,31 +251,19 @@ def insert_audio_classification(classification_data: Dict[str, Any]) -> str:
 
 
 def get_audio_classification(object_key: str) -> Optional[Dict[str, Any]]:
-    """
-    Get an audio classification by its MinIO object key.
-    
-    Args:
-        object_key: The MinIO object key
-    
-    Returns:
-        Classification document or None if not found
-    """
     collection = get_collection("audio_classifications")
     return collection.find_one({"minio_object_key": object_key})
 
 
 def audio_already_processed(object_key: str) -> bool:
-    """
-    Check if an audio file has already been processed.
-    
-    Args:
-        object_key: The MinIO object key to check
-    
-    Returns:
-        True if file was already processed, False otherwise
-    """
     collection = get_collection("audio_classifications")
     return collection.count_documents({"minio_object_key": object_key}, limit=1) > 0
+
+
+def audio_file_already_processed(file_name: str) -> bool:
+    """Check if an audio file has already been processed by its original file name."""
+    collection = get_collection("audio_classifications")
+    return collection.count_documents({"file_name": file_name}, limit=1) > 0
 
 
 def get_audio_classifications_count() -> int:
@@ -371,46 +273,12 @@ def get_audio_classifications_count() -> int:
 
 
 def get_audio_classifications_with_species(taxon_key: str) -> List[Dict[str, Any]]:
-    """
-    Get all audio classifications that detected a specific species.
-    
-    Args:
-        taxon_key: The taxonomic identifier to search for
-    
-    Returns:
-        List of classification documents
-    """
     collection = get_collection("audio_classifications")
     return list(collection.find({"classifications.taxon_key": taxon_key}))
 
 
-# =============================================================================
 # Report Generation Functions
-# =============================================================================
-
 def get_species_with_positive_classifications(min_confidence: float = 0.5) -> List[Dict[str, Any]]:
-    """
-    Aggregate species that have at least one positive audio classification.
-    
-    Uses MongoDB aggregation pipeline to:
-    1. Unwind classifications array
-    2. Filter by confidence >= min_confidence
-    3. Group by taxon_key with statistics
-    4. Lookup species information
-    
-    Args:
-        min_confidence: Minimum confidence threshold for positive classification
-    
-    Returns:
-        List of dictionaries containing species info with classification stats:
-        - taxon_key: Species identifier
-        - classification_count: Number of positive classifications
-        - avg_confidence: Average confidence score
-        - max_confidence: Maximum confidence score
-        - min_confidence: Minimum confidence score
-        - unique_locations: Number of unique recording locations
-        - scientific_name, canonical_name, family, order: From species collection
-    """
     collection = get_collection("audio_classifications")
     
     pipeline = [
@@ -472,13 +340,23 @@ def get_species_with_positive_classifications(min_confidence: float = 0.5) -> Li
     return list(collection.aggregate(pipeline))
 
 
+def get_observation_data_for_species(taxon_keys: list) -> Dict[str, Dict[str, Any]]:
+    """Get aggregated observation data for given taxon keys from the observations collection."""
+    collection = get_collection("observations")
+    pipeline = [
+        {"$match": {"taxon_key": {"$in": taxon_keys}}},
+        {"$group": {
+            "_id": "$taxon_key",
+            "observation_count": {"$sum": 1},
+            "sources": {"$addToSet": "$source"},
+            "biological_data_samples": {"$push": "$biological_data"},
+        }},
+    ]
+    results = list(collection.aggregate(pipeline))
+    return {r["_id"]: r for r in results}
+
+
 def get_observations_stats_by_source() -> Dict[str, int]:
-    """
-    Get observation counts grouped by source.
-    
-    Returns:
-        Dictionary mapping source names to counts
-    """
     collection = get_collection("observations")
     
     pipeline = [
@@ -493,15 +371,6 @@ def get_observations_stats_by_source() -> Dict[str, int]:
 
 
 def get_all_observations_with_species(source: Optional[str] = None) -> List[Dict[str, Any]]:
-    """
-    Get all observations with their species information.
-    
-    Args:
-        source: Optional filter by source (e.g., 'kafka', 'audio_classification')
-    
-    Returns:
-        List of observations with species info joined
-    """
     collection = get_collection("observations")
     
     match_stage = {}

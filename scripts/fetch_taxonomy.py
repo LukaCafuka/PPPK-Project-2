@@ -1,10 +1,3 @@
-"""
-Fetch Bird Taxonomy
-Fetches bird species taxonomy data from aves.regoch.net and stores in MongoDB.
-
-Learning Outcome 3 (Minimal - 10 points)
-"""
-
 import logging
 import sys
 import time
@@ -33,20 +26,10 @@ REQUEST_TIMEOUT = 30
 RETRY_ATTEMPTS = 3
 RETRY_DELAY = 2
 
-# The website loads data from a JSON file
 AVES_JSON_URL = f"{AVES_API_BASE_URL}/aves.json"
 
 
 def fetch_species_json(attempt: int = 1) -> Optional[List[Dict[str, Any]]]:
-    """
-    Fetch species data from the JSON endpoint.
-    
-    Args:
-        attempt: Current attempt number
-    
-    Returns:
-        List of species dictionaries or None if fetch fails
-    """
     try:
         logger.info(f"Fetching species data from: {AVES_JSON_URL}")
         response = requests.get(AVES_JSON_URL, timeout=REQUEST_TIMEOUT)
@@ -70,23 +53,6 @@ def fetch_species_json(attempt: int = 1) -> Optional[List[Dict[str, Any]]]:
 
 
 def transform_species(raw_species: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Transform raw JSON species data to our schema.
-    
-    The JSON contains fields like:
-    - key: taxon key (GBIF identifier)
-    - scientificName: full scientific name with author
-    - canonicalName: scientific name without author
-    - rank: taxonomic rank (e.g., "SPECIES")
-    - family: family name
-    - order: order name
-    
-    Args:
-        raw_species: Raw species data from JSON
-    
-    Returns:
-        Transformed species dictionary
-    """
     return {
         "taxon_key": str(raw_species.get("key", "")),
         "scientific_name": raw_species.get("scientificName", ""),
@@ -99,12 +65,6 @@ def transform_species(raw_species: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def fetch_all_species() -> List[Dict[str, Any]]:
-    """
-    Fetch all species from the JSON endpoint and transform them.
-    
-    Returns:
-        List of transformed species dictionaries
-    """
     raw_data = fetch_species_json()
     
     if raw_data is None:
@@ -125,7 +85,6 @@ def fetch_all_species() -> List[Dict[str, Any]]:
 
 
 def main():
-    """Main entry point for the taxonomy fetch script."""
     logger.info("=" * 60)
     logger.info("Fetch Bird Taxonomy from aves.regoch.net")
     logger.info("=" * 60)
@@ -136,8 +95,9 @@ def main():
     
     # Check if data already exists
     if initial_count > 0:
-        logger.info("Species data already exists in database")
-        logger.info("Proceeding to update/add new species (upsert mode)")
+        logger.info("Species data already exists in database. Skipping fetch.")
+        logger.info(f"Total species in database: {initial_count}")
+        return
     
     try:
         # Fetch all species from JSON

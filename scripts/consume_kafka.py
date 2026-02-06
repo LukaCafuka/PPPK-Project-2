@@ -1,10 +1,3 @@
-"""
-Consume Kafka Messages
-Reads bird observation messages from Kafka and stores them in MongoDB.
-
-Learning Outcome 3 (Desired - 5 points)
-"""
-
 import json
 import logging
 import sys
@@ -27,12 +20,6 @@ logger = logging.getLogger(__name__)
 
 
 def create_consumer() -> Consumer:
-    """
-    Create and configure a Kafka consumer.
-    
-    Returns:
-        Configured Kafka Consumer instance
-    """
     config = {
         'bootstrap.servers': KAFKA_BOOTSTRAP_SERVERS,
         'group.id': KAFKA_GROUP_ID,
@@ -48,15 +35,6 @@ def create_consumer() -> Consumer:
 
 
 def parse_message(msg_value: bytes) -> Optional[Dict[str, Any]]:
-    """
-    Parse a Kafka message value into a dictionary.
-    
-    Args:
-        msg_value: Raw message bytes from Kafka
-    
-    Returns:
-        Parsed dictionary or None if parsing fails
-    """
     try:
         data = json.loads(msg_value.decode('utf-8'))
         return data
@@ -69,17 +47,6 @@ def parse_message(msg_value: bytes) -> Optional[Dict[str, Any]]:
 
 
 def transform_observation(raw_data: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Transform raw Kafka message data into the observation format.
-    
-    Handles varying biological properties with a flexible schema.
-    
-    Args:
-        raw_data: Raw message data from Kafka
-    
-    Returns:
-        Transformed observation dictionary
-    """
     # Extract core required fields
     observation = {
         "taxon_key": raw_data.get("taxon_key") or raw_data.get("taxonKey") or raw_data.get("species_id"),
@@ -141,16 +108,6 @@ def transform_observation(raw_data: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def consume_all_messages(consumer: Consumer, batch_size: int = 100) -> int:
-    """
-    Consume all available messages from the Kafka topic.
-    
-    Args:
-        consumer: Kafka Consumer instance
-        batch_size: Number of messages to batch before inserting to MongoDB
-    
-    Returns:
-        Total number of messages processed
-    """
     consumer.subscribe([KAFKA_TOPIC])
     logger.info(f"Subscribed to topic: {KAFKA_TOPIC}")
     

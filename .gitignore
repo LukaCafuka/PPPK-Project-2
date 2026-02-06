@@ -93,8 +93,10 @@ reports/
 
 # Snakemake
 .snakemake/
+.snakemake_checkpoints/
 
 # Logs
+logs/
 *.log
 
 # OS files

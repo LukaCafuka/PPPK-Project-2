@@ -1,3 +1,3 @@
 """
-Utility modules for the Bird Pipeline project.
+Utility modules for the PPPK project.
 """

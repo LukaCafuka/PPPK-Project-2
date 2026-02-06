@@ -1,11 +1,3 @@
-"""
-Generate Report
-Generates a CSV report for bird species with positive classifications.
-Supports fuzzy filtering by species name and applies data cleaning/transformations.
-
-Learning Outcome 3 (Desired - 5 points)
-"""
-
 import argparse
 import logging
 import os
@@ -26,6 +18,7 @@ from config import (
 )
 from utils.mongo_client import (
     get_species_with_positive_classifications,
+    get_observation_data_for_species,
     get_species_count,
     get_audio_classifications_count,
     get_observations_count,
@@ -44,19 +37,6 @@ def fuzzy_filter_species(
     query: str, 
     threshold: int = 70
 ) -> List[Dict[str, Any]]:
-    """
-    Filter species by fuzzy matching on scientific_name or canonical_name.
-    
-    Uses partial ratio matching to find species whose names are similar to the query.
-    
-    Args:
-        species_list: List of species dictionaries with name fields
-        query: Search query string
-        threshold: Minimum fuzzy match score (0-100) to include in results
-    
-    Returns:
-        Filtered list of species matching the query
-    """
     if not query or not query.strip():
         return species_list
     
@@ -90,23 +70,60 @@ def fuzzy_filter_species(
     return results
 
 
+def enrich_with_observation_data(species_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Enrich species classification data with observation data from MongoDB (including Kafka)."""
+    if not species_data:
+        return species_data
+
+    taxon_keys = [s.get("taxon_key", "") for s in species_data if s.get("taxon_key")]
+    if not taxon_keys:
+        return species_data
+
+    obs_data = get_observation_data_for_species(taxon_keys)
+
+    for species in species_data:
+        tk = species.get("taxon_key", "")
+        obs = obs_data.get(tk)
+        if obs:
+            species["total_observation_count"] = obs.get("observation_count", 0)
+            species["observation_sources"] = ", ".join(sorted(obs.get("sources", [])))
+
+            # Merge biological data fields across all observations
+            bio_samples = obs.get("biological_data_samples", [])
+            merged_bio: Dict[str, Any] = {}
+            for sample in bio_samples:
+                if not isinstance(sample, dict):
+                    continue
+                for key, value in sample.items():
+                    # Skip internal audio-classification fields
+                    if key in ("classification_confidence", "audio_file", "scientific_name"):
+                        continue
+                    if key not in merged_bio:
+                        merged_bio[key] = set() if isinstance(value, (str, bool)) else []
+                    if isinstance(value, (str, bool)):
+                        merged_bio[key].add(str(value))
+                    else:
+                        merged_bio[key].append(value)
+
+            # Flatten merged bio data into the species dict
+            for key, values in merged_bio.items():
+                if isinstance(values, set):
+                    species[f"bio_{key}"] = "; ".join(sorted(values))
+                else:
+                    # For numeric values, take the average
+                    numeric_vals = [v for v in values if isinstance(v, (int, float))]
+                    if numeric_vals:
+                        species[f"bio_{key}"] = round(sum(numeric_vals) / len(numeric_vals), 2)
+                    else:
+                        species[f"bio_{key}"] = "; ".join(str(v) for v in values)
+        else:
+            species["total_observation_count"] = 0
+            species["observation_sources"] = ""
+
+    return species_data
+
+
 def clean_and_transform_data(raw_data: List[Dict[str, Any]]) -> pd.DataFrame:
-    """
-    Clean and transform raw aggregation data into a pandas DataFrame.
-    
-    Applies the following transformations:
-    - Removes records with missing taxon_key
-    - Normalizes species names (strip whitespace)
-    - Rounds confidence values to 2 decimal places
-    - Handles null/missing fields with appropriate defaults
-    - Sorts by classification count descending
-    
-    Args:
-        raw_data: List of dictionaries from MongoDB aggregation
-    
-    Returns:
-        Cleaned and transformed pandas DataFrame
-    """
     if not raw_data:
         logger.warning("No data to transform")
         return pd.DataFrame()
@@ -114,12 +131,12 @@ def clean_and_transform_data(raw_data: List[Dict[str, Any]]) -> pd.DataFrame:
     # Convert to DataFrame
     df = pd.DataFrame(raw_data)
     
-    # Remove records with missing taxon_key
-    initial_count = len(df)
-    df = df[df['taxon_key'].notna() & (df['taxon_key'] != '')]
-    removed_count = initial_count - len(df)
-    if removed_count > 0:
-        logger.info(f"Removed {removed_count} records with missing taxon_key")
+    if 'taxon_key' in df.columns:
+        missing_tk = df['taxon_key'].isna() | (df['taxon_key'] == '')
+        if missing_tk.any():
+            logger.warning(f"{missing_tk.sum()} record(s) have no taxon_key (species not found in taxonomy DB)")
+            # Fill missing taxon_key with scientific_name as fallback identifier
+            df.loc[missing_tk, 'taxon_key'] = df.loc[missing_tk, 'scientific_name']
     
     # Remove internal fuzzy score column if present
     if '_fuzzy_score' in df.columns:
@@ -138,10 +155,14 @@ def clean_and_transform_data(raw_data: List[Dict[str, Any]]) -> pd.DataFrame:
             df[col] = df[col].round(2)
     
     # Ensure numeric columns have proper types
-    numeric_columns = ['classification_count', 'unique_locations', 'audio_file_count']
+    numeric_columns = ['classification_count', 'unique_locations', 'audio_file_count', 'total_observation_count']
     for col in numeric_columns:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
+    
+    # Normalize observation_sources string column
+    if 'observation_sources' in df.columns:
+        df['observation_sources'] = df['observation_sources'].fillna('').astype(str).str.strip()
     
     # Sort by classification count descending
     df = df.sort_values('classification_count', ascending=False)
@@ -160,30 +181,23 @@ def clean_and_transform_data(raw_data: List[Dict[str, Any]]) -> pd.DataFrame:
         'min_confidence',
         'unique_locations',
         'audio_file_count',
+        'total_observation_count',
+        'observation_sources',
     ]
     
     # Only include columns that exist
     final_columns = [col for col in column_order if col in df.columns]
+    
+    # Append any bio_ columns dynamically
+    bio_columns = sorted([col for col in df.columns if col.startswith('bio_')])
+    final_columns.extend(bio_columns)
+    
     df = df[final_columns]
     
     return df
 
 
 def generate_csv_report(df: pd.DataFrame, output_path: str) -> bool:
-    """
-    Generate a CSV report from the DataFrame.
-    
-    Args:
-        df: Cleaned DataFrame to export
-        output_path: Path to save the CSV file
-    
-    Returns:
-        True if successful, False otherwise
-    """
-    if df.empty:
-        logger.warning("DataFrame is empty, no CSV will be generated")
-        return False
-    
     try:
         # Ensure output directory exists
         output_dir = Path(output_path).parent
@@ -292,9 +306,22 @@ def main():
     logger.info(f"\nQuerying species with classifications (confidence >= {args.min_confidence})...")
     species_data = get_species_with_positive_classifications(min_confidence=args.min_confidence)
     logger.info(f"Found {len(species_data)} species with positive classifications")
+
+    if species_data:
+        logger.info("Enriching with observation data...")
+        species_data = enrich_with_observation_data(species_data)
     
     if not species_data:
-        logger.warning("No species found with positive classifications. Exiting.")
+        logger.warning("No species found with positive classifications.")
+        # Create empty CSV with headers for Snakemake compatibility
+        empty_df = pd.DataFrame(columns=[
+            'taxon_key', 'scientific_name', 'canonical_name', 'family', 'order',
+            'rank', 'classification_count', 'avg_confidence', 'max_confidence',
+            'min_confidence', 'unique_locations', 'audio_file_count',
+            'total_observation_count', 'observation_sources'
+        ])
+        generate_csv_report(empty_df, output_path)
+        logger.info(f"Created empty report at: {output_path}")
         return
     
     # Step 2: Apply fuzzy filter if specified
@@ -310,6 +337,14 @@ def main():
         
         if not species_data:
             logger.warning(f"No species found matching '{args.species_filter}'. Try lowering --fuzzy-threshold.")
+            # Create empty CSV for Snakemake compatibility
+            empty_df = pd.DataFrame(columns=[
+                'taxon_key', 'scientific_name', 'canonical_name', 'family', 'order',
+                'rank', 'classification_count', 'avg_confidence', 'max_confidence',
+                'min_confidence', 'unique_locations', 'audio_file_count',
+                'total_observation_count', 'observation_sources'
+            ])
+            generate_csv_report(empty_df, output_path)
             return
     
     # Step 3: Clean and transform data
@@ -317,7 +352,15 @@ def main():
     df = clean_and_transform_data(species_data)
     
     if df.empty:
-        logger.warning("No data after cleaning. Exiting.")
+        logger.warning("No data after cleaning.")
+        # Create empty CSV for Snakemake compatibility
+        empty_df = pd.DataFrame(columns=[
+            'taxon_key', 'scientific_name', 'canonical_name', 'family', 'order',
+            'rank', 'classification_count', 'avg_confidence', 'max_confidence',
+            'min_confidence', 'unique_locations', 'audio_file_count',
+            'total_observation_count', 'observation_sources'
+        ])
+        generate_csv_report(empty_df, output_path)
         return
     
     logger.info(f"Final dataset: {len(df)} species")

@@ -1,7 +1,3 @@
-"""
-Configuration settings for the Bird Pipeline project.
-"""
-
 # Kafka Configuration
 KAFKA_BOOTSTRAP_SERVERS = "10.0.0.42:29092"
 KAFKA_TOPIC = "bird-observations"
@@ -26,7 +22,7 @@ AVES_CLASSIFY_ENDPOINT = f"{AVES_API_BASE_URL}/api/classify"
 # Audio Processing Configuration
 AUDIO_INPUT_DIR = "./audio_files"
 AUDIO_EXTENSIONS = [".mp3", ".wav", ".ogg", ".flac", ".m4a"]
-CLASSIFICATION_CONFIDENCE_THRESHOLD = 0.5  # Minimum confidence to create observation
+CLASSIFICATION_CONFIDENCE_THRESHOLD = 0.5
 
 # Default location for audio files (Zagreb, Croatia)
 DEFAULT_LOCATION = {
@@ -36,4 +32,4 @@ DEFAULT_LOCATION = {
 
 # Report Generation Configuration
 REPORT_OUTPUT_DIR = "./reports"
-DEFAULT_FUZZY_THRESHOLD = 70  # Fuzzy matching threshold (0-100) for species name filtering
+DEFAULT_FUZZY_THRESHOLD = 70

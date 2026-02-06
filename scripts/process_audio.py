@@ -1,11 +1,3 @@
-"""
-Process Audio Files
-Scans a directory for audio files, uploads them to MinIO, classifies them using
-the bird classification API, and stores results in MongoDB.
-
-Learning Outcome 2 (20 points)
-"""
-
 import json
 import logging
 import os
@@ -38,8 +30,10 @@ from utils.minio_client import (
 from utils.mongo_client import (
     insert_audio_classification,
     audio_already_processed,
+    audio_file_already_processed,
     insert_observation,
     get_audio_classifications_count,
+    get_species_by_scientific_name,
 )
 
 # Configure logging
@@ -75,15 +69,6 @@ def generate_object_key(file_name: str) -> str:
 
 
 def scan_audio_files(directory: str) -> List[Path]:
-    """
-    Scan directory for audio files with supported extensions.
-    
-    Args:
-        directory: Path to directory to scan
-    
-    Returns:
-        List of Path objects for audio files found
-    """
     audio_files = []
     dir_path = Path(directory)
     
@@ -105,16 +90,6 @@ def scan_audio_files(directory: str) -> List[Path]:
 
 
 def call_classification_api(file_path: str, attempt: int = 1) -> Optional[Dict[str, Any]]:
-    """
-    Call the bird classification API with an audio file.
-    
-    Args:
-        file_path: Path to the audio file
-        attempt: Current attempt number (for retry logic)
-    
-    Returns:
-        API response as dictionary, or None if failed
-    """
     try:
         logger.debug(f"Calling classification API for: {file_path} (attempt {attempt})")
         
@@ -174,16 +149,6 @@ def process_single_file(
     file_path: Path,
     location: Dict[str, float]
 ) -> Tuple[bool, Optional[str]]:
-    """
-    Process a single audio file through the pipeline.
-    
-    Args:
-        file_path: Path to the audio file
-        location: Geographic location for the recording
-    
-    Returns:
-        Tuple of (success: bool, error_message: Optional[str])
-    """
     file_name = file_path.name
     object_key = generate_object_key(file_name)
     log_object_key = f"{object_key.rsplit('.', 1)[0]}.json"
@@ -212,7 +177,9 @@ def process_single_file(
         upload_bytes(MINIO_BUCKET_LOGS, log_json.encode('utf-8'), log_object_key, 'application/json')
         return False, error
     
-    logger.info(f"  Classification complete: {len(api_response.get('classifications', []))} species detected")
+    # The API returns results under the "results" key
+    raw_results = api_response.get("results", [])
+    logger.info(f"  Classification complete: {len(raw_results)} species detected")
     
     # Step 3: Create and upload log entry
     log_entry = create_log_entry(file_name, object_key, api_response, location)
@@ -220,13 +187,38 @@ def process_single_file(
     upload_bytes(MINIO_BUCKET_LOGS, log_json.encode('utf-8'), log_object_key, 'application/json')
     logger.info(f"  Log saved: {MINIO_BUCKET_LOGS}/{log_object_key}")
     
-    # Step 4: Store classification result in MongoDB
+    # Step 4: Enrich results with taxon_key from species collection and store in MongoDB
+    # The API returns: scientific_name, common_name, confidence, label, start_time, end_time
+    # We need to resolve taxon_key from scientific_name for linking with species data
+    classifications = []
+    species_cache: Dict[str, Optional[str]] = {}  # Cache scientific_name -> taxon_key
+    
+    for result in raw_results:
+        sci_name = result.get("scientific_name", "")
+        
+        # Resolve taxon_key (with caching to avoid repeated DB lookups)
+        if sci_name not in species_cache:
+            species = get_species_by_scientific_name(sci_name)
+            species_cache[sci_name] = species["taxon_key"] if species else ""
+        
+        taxon_key = species_cache[sci_name]
+        
+        classifications.append({
+            "taxon_key": taxon_key,
+            "scientific_name": sci_name,
+            "common_name": result.get("common_name", ""),
+            "confidence": result.get("confidence", 0),
+            "start_time": result.get("start_time"),
+            "end_time": result.get("end_time"),
+            "label": result.get("label", ""),
+        })
+    
     classification_data = {
         "file_name": file_name,
         "minio_object_key": object_key,
         "minio_bucket": MINIO_BUCKET_AUDIO,
         "location": location,
-        "classifications": api_response.get("classifications", []),
+        "classifications": classifications,
         "api_response": api_response,
         "log_object_key": log_object_key,
         "duration_seconds": api_response.get("duration_seconds"),
@@ -236,20 +228,20 @@ def process_single_file(
     logger.info(f"  Saved to MongoDB: {doc_id}")
     
     # Step 5: Create observations for high-confidence classifications
-    classifications = api_response.get("classifications", [])
     observations_created = 0
     
     for classification in classifications:
         confidence = classification.get("confidence", 0)
         if confidence >= CLASSIFICATION_CONFIDENCE_THRESHOLD:
             observation = {
-                "taxon_key": str(classification.get("taxon_key", "")),
+                "taxon_key": classification.get("taxon_key", ""),
                 "location": location,
                 "source": "audio_classification",
                 "biological_data": {
                     "classification_confidence": confidence,
                     "audio_file": object_key,
                     "scientific_name": classification.get("scientific_name", ""),
+                    "common_name": classification.get("common_name", ""),
                 },
                 "observed_at": datetime.now(timezone.utc),
             }
@@ -266,16 +258,7 @@ def process_audio_directory(
     directory: str = None,
     location: Dict[str, float] = None
 ) -> Dict[str, int]:
-    """
-    Process all audio files in a directory.
-    
-    Args:
-        directory: Path to audio files directory (default: from config)
-        location: Geographic location for all files (default: from config)
-    
-    Returns:
-        Summary dictionary with counts
-    """
+
     if directory is None:
         directory = AUDIO_INPUT_DIR
     
@@ -304,10 +287,11 @@ def process_audio_directory(
     for i, file_path in enumerate(audio_files, 1):
         logger.info(f"\n[{i}/{len(audio_files)}] {file_path.name}")
         
-        # Check if already processed
-        object_key = generate_object_key(file_path.name)
-        # Note: We can't check exact object key since it contains UUID
-        # For now, process all files (could be enhanced with hash-based dedup)
+        # Check if already processed by original file name
+        if audio_file_already_processed(file_path.name):
+            logger.info(f"  Already processed, skipping: {file_path.name}")
+            summary["skipped"] += 1
+            continue
         
         success, error = process_single_file(file_path, location)
         

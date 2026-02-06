@@ -1,3 +1,3 @@
 """
-Pipeline scripts for the Bird Pipeline project.
+Pipeline scripts for the PPPK project.
 """

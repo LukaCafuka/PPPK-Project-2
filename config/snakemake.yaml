@@ -1,0 +1,21 @@
+# Audio Processing Configuration
+
+# Directory containing audio files to process
+audio_dir: "scripts/audio_files"
+
+# Geographic location for audio recordings (default: Zagreb, Croatia)
+latitude: 45.815
+longitude: 15.9819
+
+# Report Generation Configuration
+
+# Output path for the generated CSV report
+report_output: "reports/bird_report.csv"
+
+# Minimum classification confidence threshold (0.0 - 1.0)
+min_confidence: 0.5
+
+# Fuzzy matching threshold for species name filtering (0 - 100)
+fuzzy_threshold: 70
+
+species_filter: ""

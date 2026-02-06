@@ -1,8 +1,3 @@
-"""
-MinIO client utilities for the Bird Pipeline project.
-Provides singleton connection management and helper functions for S3-compatible storage.
-"""
-
 import io
 import logging
 from datetime import timedelta
@@ -79,18 +74,6 @@ def ensure_buckets() -> None:
 
 
 def upload_file(bucket: str, file_path: str, object_name: str, content_type: str = None) -> bool:
-    """
-    Upload a file to MinIO.
-    
-    Args:
-        bucket: Bucket name
-        file_path: Local file path
-        object_name: Object name in MinIO
-        content_type: Optional MIME type
-    
-    Returns:
-        True if upload successful, False otherwise
-    """
     client = get_minio_client()
     
     try:
@@ -108,18 +91,6 @@ def upload_file(bucket: str, file_path: str, object_name: str, content_type: str
 
 
 def upload_bytes(bucket: str, data: bytes, object_name: str, content_type: str = "application/octet-stream") -> bool:
-    """
-    Upload raw bytes to MinIO.
-    
-    Args:
-        bucket: Bucket name
-        data: Bytes data to upload
-        object_name: Object name in MinIO
-        content_type: MIME type (default: application/octet-stream)
-    
-    Returns:
-        True if upload successful, False otherwise
-    """
     client = get_minio_client()
     
     try:
@@ -139,19 +110,6 @@ def upload_bytes(bucket: str, data: bytes, object_name: str, content_type: str =
 
 
 def upload_stream(bucket: str, stream: BinaryIO, object_name: str, length: int, content_type: str = "application/octet-stream") -> bool:
-    """
-    Upload a file stream to MinIO.
-    
-    Args:
-        bucket: Bucket name
-        stream: File-like object
-        object_name: Object name in MinIO
-        length: Size of the data in bytes
-        content_type: MIME type
-    
-    Returns:
-        True if upload successful, False otherwise
-    """
     client = get_minio_client()
     
     try:
@@ -170,17 +128,6 @@ def upload_stream(bucket: str, stream: BinaryIO, object_name: str, length: int, 
 
 
 def get_presigned_url(bucket: str, object_name: str, expires: timedelta = timedelta(hours=1)) -> Optional[str]:
-    """
-    Get a presigned URL for downloading an object.
-    
-    Args:
-        bucket: Bucket name
-        object_name: Object name in MinIO
-        expires: URL expiration time (default: 1 hour)
-    
-    Returns:
-        Presigned URL or None if error
-    """
     client = get_minio_client()
     
     try:
@@ -192,16 +139,6 @@ def get_presigned_url(bucket: str, object_name: str, expires: timedelta = timede
 
 
 def file_exists(bucket: str, object_name: str) -> bool:
-    """
-    Check if an object exists in MinIO.
-    
-    Args:
-        bucket: Bucket name
-        object_name: Object name to check
-    
-    Returns:
-        True if object exists, False otherwise
-    """
     client = get_minio_client()
     
     try:
@@ -215,17 +152,6 @@ def file_exists(bucket: str, object_name: str) -> bool:
 
 
 def download_file(bucket: str, object_name: str, file_path: str) -> bool:
-    """
-    Download an object from MinIO to a local file.
-    
-    Args:
-        bucket: Bucket name
-        object_name: Object name in MinIO
-        file_path: Local file path to save to
-    
-    Returns:
-        True if download successful, False otherwise
-    """
     client = get_minio_client()
     
     try:
@@ -238,16 +164,6 @@ def download_file(bucket: str, object_name: str, file_path: str) -> bool:
 
 
 def get_object_data(bucket: str, object_name: str) -> Optional[bytes]:
-    """
-    Get object data as bytes.
-    
-    Args:
-        bucket: Bucket name
-        object_name: Object name in MinIO
-    
-    Returns:
-        Object data as bytes or None if error
-    """
     client = get_minio_client()
     
     try:
@@ -262,16 +178,6 @@ def get_object_data(bucket: str, object_name: str) -> Optional[bytes]:
 
 
 def list_objects(bucket: str, prefix: str = "") -> list:
-    """
-    List objects in a bucket with optional prefix.
-    
-    Args:
-        bucket: Bucket name
-        prefix: Optional prefix filter
-    
-    Returns:
-        List of object names
-    """
     client = get_minio_client()
     
     try:
@@ -283,16 +189,6 @@ def list_objects(bucket: str, prefix: str = "") -> list:
 
 
 def delete_object(bucket: str, object_name: str) -> bool:
-    """
-    Delete an object from MinIO.
-    
-    Args:
-        bucket: Bucket name
-        object_name: Object name to delete
-    
-    Returns:
-        True if deletion successful, False otherwise
-    """
     client = get_minio_client()
     
     try:
