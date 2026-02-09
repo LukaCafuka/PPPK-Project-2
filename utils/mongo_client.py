@@ -288,36 +288,64 @@ def get_species_with_positive_classifications(min_confidence: float = 0.5) -> Li
         # Filter for classifications meeting the confidence threshold
         {"$match": {"classifications.confidence": {"$gte": min_confidence}}},
         
-        # Group by taxon_key and compute statistics
+        # Group by both taxon_key and scientific_name so that species with
+        # empty taxon_key still get separate rows instead of being lumped together
         {"$group": {
-            "_id": "$classifications.taxon_key",
+            "_id": {
+                "taxon_key": "$classifications.taxon_key",
+                "scientific_name": "$classifications.scientific_name",
+            },
             "classification_count": {"$sum": 1},
             "avg_confidence": {"$avg": "$classifications.confidence"},
             "max_confidence": {"$max": "$classifications.confidence"},
             "min_confidence": {"$min": "$classifications.confidence"},
             "locations": {"$addToSet": "$location.coordinates"},
-            "scientific_names": {"$addToSet": "$classifications.scientific_name"},
             "audio_files": {"$addToSet": "$minio_object_key"},
         }},
         
-        # Lookup species information from the species collection
+        # Lookup species information from the species collection using taxon_key
         {"$lookup": {
             "from": "species",
-            "localField": "_id",
+            "localField": "_id.taxon_key",
             "foreignField": "taxon_key",
             "as": "species_info"
         }},
         
-        # Unwind species_info (will be empty array if no match)
-        {"$unwind": {
-            "path": "$species_info",
-            "preserveNullAndEmptyArrays": True
+        # For species with empty taxon_key, try matching by canonical_name
+        {"$lookup": {
+            "from": "species",
+            "localField": "_id.scientific_name",
+            "foreignField": "canonical_name",
+            "as": "species_info_by_name"
+        }},
+        
+        # Merge the two lookup results (prefer taxon_key match)
+        {"$addFields": {
+            "resolved_species": {
+                "$cond": {
+                    "if": {"$gt": [{"$size": "$species_info"}, 0]},
+                    "then": {"$arrayElemAt": ["$species_info", 0]},
+                    "else": {"$arrayElemAt": ["$species_info_by_name", 0]}
+                }
+            }
         }},
         
         # Project final shape
         {"$project": {
             "_id": 0,
-            "taxon_key": "$_id",
+            "taxon_key": {
+                "$cond": {
+                    "if": {"$and": [
+                        {"$ne": ["$_id.taxon_key", ""]},
+                        {"$ne": ["$_id.taxon_key", None]}
+                    ]},
+                    "then": "$_id.taxon_key",
+                    "else": {"$ifNull": [
+                        "$resolved_species.taxon_key",
+                        "$_id.scientific_name"
+                    ]}
+                }
+            },
             "classification_count": 1,
             "avg_confidence": {"$round": ["$avg_confidence", 4]},
             "max_confidence": {"$round": ["$max_confidence", 4]},
@@ -325,12 +353,12 @@ def get_species_with_positive_classifications(min_confidence: float = 0.5) -> Li
             "unique_locations": {"$size": "$locations"},
             "audio_file_count": {"$size": "$audio_files"},
             "scientific_name": {
-                "$ifNull": ["$species_info.scientific_name", {"$arrayElemAt": ["$scientific_names", 0]}]
+                "$ifNull": ["$resolved_species.scientific_name", "$_id.scientific_name"]
             },
-            "canonical_name": {"$ifNull": ["$species_info.canonical_name", ""]},
-            "family": {"$ifNull": ["$species_info.family", ""]},
-            "order": {"$ifNull": ["$species_info.order", ""]},
-            "rank": {"$ifNull": ["$species_info.rank", ""]},
+            "canonical_name": {"$ifNull": ["$resolved_species.canonical_name", ""]},
+            "family": {"$ifNull": ["$resolved_species.family", ""]},
+            "order": {"$ifNull": ["$resolved_species.order", ""]},
+            "rank": {"$ifNull": ["$resolved_species.rank", ""]},
         }},
         
         # Sort by classification count descending
